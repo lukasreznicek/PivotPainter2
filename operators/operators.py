@@ -3,13 +3,12 @@ from . import utils
 
 
 class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
+    '''Select one or multiple parent objects, children objects are processed automatically.\n\nFRONT: X axis\nUP: Z axis\n\nObjects need to be in world zero, then exported with generated UVs'''
     bl_idname = "object.lr_pivot_painter_export"
     bl_label = "Export textures for pivot painter 2.0"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context): 
-        '''File is saved next to a .blend file'''
-        
         myprops = bpy.context.scene.pivot_painter_2
 
     
