@@ -257,12 +257,10 @@ class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
             #Empty Pixels value
             empty_pixel = [0,0,0,0]
 
-
             #Fill remaining pixels with black
             redundant_pixes_amount = resolution[0]*resolution[1]-len(pixels)
             for i in range(0,redundant_pixes_amount):
                 pixels.append(empty_pixel)
-
 
             #Flip image vertically using numpy (blender by default starts in bottom left corner)
             np_array = numpy.array(pixels)
@@ -285,14 +283,18 @@ class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
             image.save()
 
         
+        #TEXTURES BASE NAME
+        if not myprops.export_name:
+            image_name_base = bpy.context.active_object.name
+        else:
+            image_name_base = myprops.export_name
+
         #ASSEMBLY
         image_name_prefix = 'T_'
-        image_name_base = object_list[0].name
         image_rgb_props = [myprops.image_1_rgb, myprops.image_2_rgb]
         image_alpha_props = [myprops.image_1_alpha, myprops.image_2_alpha]  
         
         # ---- IMAGE 1 RGB ----
-
         for prop_rgb,prop_alpha in zip(image_rgb_props,image_alpha_props):
 
             if prop_rgb != 'OP0': 

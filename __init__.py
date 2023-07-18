@@ -111,6 +111,7 @@ class pivot_painter2_settings(bpy.types.PropertyGroup):
 
     image_2_alpha:bpy.props.EnumProperty(name= 'Alpha', description= '', items= img2_alpha_callback)
 
+    export_name:bpy.props.StringProperty(name="Name", description="Texture output base name. \nUses active object name if empty", default="PPainter", maxlen=1024)
     export_path:bpy.props.StringProperty(name="Folder", description="Texture output location. \n// = .blend file location\n//..\ = .blend file parent folder", default="//", maxlen=1024,subtype='DIR_PATH')
     uv_coordinate: bpy.props.IntProperty(name="Texture Coordinate", description="Location of Pivot Painter custom UVs. Starts with 1", default=2, min = 1, soft_max = 5)
     
@@ -164,6 +165,8 @@ class VIEW3D_PT_pivot_painter2(bpy.types.Panel):
 
 
         layout = self.layout.box()
+        row = layout.row(align=True)
+        row.prop(pivot_painter_2, "export_name")
         row = layout.row(align=True)
         row.prop(pivot_painter_2, "export_path")
         row = layout.row(align=True)
