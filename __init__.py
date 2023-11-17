@@ -25,7 +25,7 @@ bl_info = {
 
 
 
-from .operators.operators import OBJECT_OT_lr_pivot_painter_export
+from .operators.operators import OBJECT_OT_lr_pivot_painter_export, OBJECT_OT_lr_rebuild,OBJECT_OT_lr_attribute_increment_int_values
 from bpy.props import IntProperty, CollectionProperty, StringProperty,FloatVectorProperty,BoolProperty,EnumProperty
 
 
@@ -174,7 +174,38 @@ class VIEW3D_PT_pivot_painter2(bpy.types.Panel):
         row.operator("object.lr_pivot_painter_export", text="Process Hierarchy", icon = 'EXPORT')
 
 
-classes = [pivot_painter2_settings,VIEW3D_PT_pivot_painter2, OBJECT_OT_lr_pivot_painter_export]
+
+class VIEW3D_PT_pivot_painter2_utils(bpy.types.Panel):
+    bl_label = "Utilities"
+    bl_idname = "OBJECT_PT_pivot_painter2_utils"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'PivotPainter2'
+
+
+    def draw(self, context):
+
+        layout = self.layout.box()
+        layout.label(text="Mesh preparation")
+
+        row = layout.row(align=True)
+        row.operator("geometry.lr_set_per_obj_attribute", text="Increment attribute", icon = 'EXPORT')
+        row = layout.row(align=True)
+        row.operator("object.lr_rebuild", text="Deconstruct", icon = 'EXPORT')
+
+
+
+classes = [
+           #Core pivot painter
+           pivot_painter2_settings, 
+           VIEW3D_PT_pivot_painter2, 
+           OBJECT_OT_lr_pivot_painter_export, 
+           
+           #Additional Utilities
+           VIEW3D_PT_pivot_painter2_utils, 
+           OBJECT_OT_lr_attribute_increment_int_values,
+           OBJECT_OT_lr_rebuild
+           ]
 
 def register():
     for cls in classes:

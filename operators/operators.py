@@ -1,9 +1,9 @@
-import bpy, os, math, numpy, bmesh, random
+import bpy, os, math, numpy, bmesh, random, mathutils
 from . import utils
 
 
 class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
-    '''Select one or multiple parent objects, children objects are processed automatically.\n\nFRONT: X axis\nUP: Z axis\n\nObjects need to be in world zero, then exported with generated UVs'''
+    '''Select one or multiple parent objects, children objects are processed automatically.\n\nFRONT: X axis\nUP: Z axis\n\nOBJECTS NEED TO BE IN WORLD ZERO, then exported with generated UVs'''
     bl_idname = "object.lr_pivot_painter_export"
     bl_label = "Export textures for pivot painter 2.0"
     bl_options = {'REGISTER', 'UNDO'}
@@ -24,13 +24,13 @@ class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
                 continue
             object_list.append(obj)
             object_list.extend(obj.children_recursive)
+
         
-        #Get image resolution based on number of objects
-        resolution = utils.find_texture_dimensions(len(object_list))
+        resolution = utils.find_texture_dimensions(len(object_list)) #Get image resolution based on number of objects
 
 
 
-        # Create list of UVsss
+        # Create list of UVs
         resolution_x = resolution[0]
         resolution_y = resolution[1]
 
@@ -77,8 +77,8 @@ class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
             for face in bm_obj.faces:
                 for loop in face.loops:
                     loop[uv].uv = uv_list[index][0],uv_list[index][1]
-            #Write bmesh
-            bm_obj.to_mesh(obj.data)
+            
+            bm_obj.to_mesh(obj.data) #Write bmesh
 
 
         def pixels_for_pivot_position_16_bit(objects):
@@ -103,6 +103,7 @@ class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
                 pixels.append(findConstantBiasScaleVectorValues(matrix_copy_transposed[axis]))
             return pixels
 
+
         def pixels_for_alpha_random_value_per_element(number_of_objects):
             rand_val = []
             for value in range(0,number_of_objects):
@@ -111,7 +112,6 @@ class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
             return rand_val
 
         #Alpa Stuff
-
         def clamp(num,cMin,cMax):
             result = num
             if result < cMin:
@@ -120,6 +120,7 @@ class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
                 if result > cMax:
                     result = cMax
             return result
+
 
         def findMaxBoundingBoxDistanceAlongVector(objects,axis,ld = False):
             #Werified works
@@ -369,19 +370,462 @@ class OBJECT_OT_lr_pivot_painter_export(bpy.types.Operator):
 
 
 
+class OBJECT_OT_lr_attribute_increment_int_values(bpy.types.Operator):
+    '''
+    Multiple object selection. Active int attributes will be incremented on vertex domain per object. Decimal values stay unchanged. 
+    Active object gets 0.
+    '''
+    bl_idname = "geometry.lr_set_per_obj_attribute"
+    bl_label = "Increments int attribute on vertex domain"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # name: bpy.props.StringProperty(
+    #     name="",
+    #     description="Enter a string",
+    #     default="Attribute",
+    # )
+
+    @classmethod
+    def poll(cls, context): 
+        return context.mode == 'OBJECT' or context.mode == 'EDIT_MESH'
+        
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self)
+
+    def execute(self, context):
+        selected_objects = bpy.context.selected_objects
+        selected_objects.remove(bpy.context.active_object)
+        selected_objects.insert(0,bpy.context.active_object)
+
+        for index,obj in enumerate(selected_objects):
+            for attribute in obj.data.attributes.active.data:
+                attribute.value = attribute.value%1.0 + index
+
+        return {'FINISHED'}
+
+
+class OBJECT_OT_lr_rebuild(bpy.types.Operator):
+    '''
+    
+    Breaks selected objects into subcomponent based on values in Elements attribute.
+    
+    Whole number = Subelement index, this list includes indexes mentioned below
+    .1 = subelement pivot point.
+    .2 = Subelement X axis.
+    .3 = Subelement Y axis.
+    ._01 = Second and third decimal is parent subelement index. If unspecified parent is index 0.
+    '''
+
+
+    bl_idname = "object.lr_rebuild"
+    bl_label = "Breaks down mesh into subcomponents"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    remove_extra: bpy.props.BoolProperty(
+        name="Remove Extra",
+        description="Remove vertices for pivot position. X axis and Y Axis",
+        default=False,
+    )
+
+
+    # @classmethod
+    # def poll(cls, context): 
+    #     return context.mode == 'OBJECT' or context.mode == 'EDIT_MESH'
+        
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self)
+
+            
+
+
+    def execute(self, context): 
+        objs = bpy.context.selected_objects
+
+        
+        def parent_objects(child_obj, parent_obj):
+            # Store the child object's world matrix
+            child_world_matrix = child_obj.matrix_world.copy()
+
+            # Set the child object's parent to the parent object
+            child_obj.parent = parent_obj
+            child_obj.matrix_world = child_world_matrix  # Restore the world matrix
+
+        @staticmethod
+        def vec_to_rotational_matrix(v1,v2,v3):
+            """
+            type = mathutils.Vector()
+            v1,v2,v3 = Vectors for X,Y,Z axis. 
+            """
+            # Create the rotational matrix
+            return Matrix((v1, v2, v3)).transposed()
+
+        @staticmethod
+        def gram_schmidt_orthogonalization(v1, v2, v3):
+            # Normalize the vectors
+            v1.normalize()
+            v2.normalize()
+            v3.normalize()
+            
+            # Create the orthogonal basis using Gram-Schmidt orthogonalization
+            u1 = v1
+            u2 = v2 - (v2.dot(u1) * u1)
+            u2.normalize()
+            u3 = v3 - (v3.dot(u1) * u1) - (v3.dot(u2) * u2)
+            u3.normalize()
+            
+            orthogonal_vector_basis = (u1, u2, u3)
+            return orthogonal_vector_basis
+
+        @staticmethod
+        def calculate_z_vector(v1, v2):
+            # Calculate the cross product of v1 and v2
+            z_vector = v1.cross(v2)
+            z_vector.normalize()
+            return z_vector
+
+        @staticmethod
+        def set_origin_rotation(obj, rotation_matrix_to):
+            '''
+            obj:
+            object origin that is going to be rotated
+            
+            Rotational Matrix:
+            Matrix without scale and translation influence (bpy.contextobject.matrix_world.to_3x3().normalized().to_4x4())
+            
+            Requires: mathutils.Matrix
+            '''
+
+            matrix_world = obj.matrix_world
+            
+            Rloc = matrix_world.to_3x3().normalized().to_4x4().inverted() @ rotation_matrix_to
+
+            #Object rotation
+            obj.matrix_world = (Matrix.Translation(matrix_world.translation) @ rotation_matrix_to @ Matrix.Diagonal(matrix_world.to_scale()).to_4x4())
+            
+            #Mesh rotation
+            obj.data.transform(Rloc.inverted())
+
+        @staticmethod
+        def local_to_global_directional_vector(obj, local_vector):
+            '''
+            Translation of the object does not matter. Purely for rotation
+            vector points one unit from object origin.
+            
+            '''
+            # Ensure the object is valid and has a matrix
+            if not isinstance(obj, bpy.types.Object) or not obj.matrix_world:
+                raise ValueError("Invalid object or object has no world matrix")
+
+            # Create a 4x4 matrix representing the object's world transformation
+            world_matrix = obj.matrix_world
+
+            # Convert the local vector to a 4D vector (homogeneous coordinates)
+            local_vector_homogeneous = local_vector.to_4d()
+
+            # Multiply the local vector by the object's world matrix to get the global vector
+            global_vector_homogeneous = world_matrix @ local_vector_homogeneous
+
+            # Convert the resulting 4D vector back to a 3D vector (removing homogeneous coordinate)
+            global_vector = global_vector_homogeneous.to_3d()
+
+            return global_vector
+
+        @staticmethod
+        def matrix_decompose(matrix_world):
+            ''' 
+            returns active_obj_mat_loc, active_obj_mat_rot, active_obj_mat_sca 
+            reconstruct by loc @ rotQuat @ scale 
+            '''
+            
+            loc, rotQuat, scale = matrix_world.decompose()
+
+            active_obj_mat_loc = Matrix.Translation(loc)
+            active_obj_mat_rot = rotQuat.to_matrix().to_4x4()
+            active_obj_mat_sca = Matrix()
+            for i in range(3):
+                active_obj_mat_sca[i][i] = scale[i]
+
+            return active_obj_mat_loc, active_obj_mat_rot, active_obj_mat_sca
+
+        @staticmethod
+        def move_origin_to_coord(obj,x,y,z):
+            
+            co_translation_vec = Vector((x,y,z))
+
+            obj_translation_vec = obj.matrix_world.to_translation()
+            obj_mat_loc, obj_mat_rot, obj_mat_sca = matrix_decompose(obj.matrix_world)
+            
+            mat_co = Matrix.Translation((x,y,z))
+
+
+            new_mat = mat_co @ obj_mat_rot @ obj_mat_sca
+            new_mat_mesh = new_mat.inverted() @ obj.matrix_world
+            
+            
+            obj.matrix_world = new_mat
+
+            is_object = True
+            if bpy.context.object.mode !='OBJECT':
+                is_object = False
+                store_mode = bpy.context.object.mode
+                bpy.context.object.mode = 'OBJECT'
+
+            obj.data.transform(new_mat_mesh)
+
+            if is_object == False:
+                bpy.context.object.mode = store_mode
+        @staticmethod
+        def get_global_vertex_position(obj, vertex_index):
+            """
+            Get the global vertex position for a given object and vertex index.
+            
+            Parameters:
+            obj (bpy.types.Object): The object containing the vertex.
+            vertex_index (int): The index of the vertex.
+            
+            Returns:
+            mathutils.Vector: The vertex position in global space.
+            """
+            if not obj or obj.type != 'MESH':
+                # print("Invalid object or not a mesh.")
+                return None
+            
+            # Get the mesh data of the object
+            mesh = obj.data
+            
+            # Ensure the vertex index is valid
+            if vertex_index < 0 or vertex_index >= len(mesh.vertices):
+                # print("Invalid vertex index.")
+                return None
+            
+            # Access the vertex's local coordinates
+            local_vertex_co = mesh.vertices[vertex_index].co
+            
+            # Get the global coordinates of the vertex
+            global_vertex_co = obj.matrix_world @ local_vertex_co
+            
+            return global_vertex_co
+        
+        @staticmethod
+        def element_separate(obj,element_indexes,parent = None, origin_coords = None):
+            '''
+            Removes one element
+            Parameters:
+            obj (bpy.types.Object): The object containing the vertex.
+            element_indexes [int,int...]: vertex index list that is going to be detached
+            
+            Returns:
+            (bpy.types.Object): Detached mesh with only specified indexes.
+            '''
+
+            if obj.type == 'MESH':
+
+                selected_obj = bpy.context.selected_objects
+                active_obj = bpy.context.active_object
+                bpy.ops.object.select_all(action='DESELECT')
+
+                bpy.context.view_layer.objects.active = obj
+                obj.select_set(True)
+
+
+                bpy.ops.object.duplicate()
+                obj_separated = bpy.context.object
+
+                bpy.ops.object.mode_set(mode='EDIT')
+                bpy.ops.mesh.select_all(action='DESELECT')
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+
+                for vert in obj_separated.data.vertices:
+                    if vert.index not in element_indexes:
+                        vert.select = True
+
+                bpy.ops.object.mode_set(mode='EDIT')
+                bpy.ops.mesh.delete(type='VERT')
+                bpy.ops.object.mode_set(mode='OBJECT')            
+
+                if origin_coords !=None:
+                    move_origin_to_coord(obj_separated,
+                                         origin_coords[0],
+                                         origin_coords[1],
+                                         origin_coords[2])
+
+                #parent
+                if parent !=None:
+                    parent_objects(obj_separated,parent)
+
+                
+
+
+                #restore selection
+                bpy.ops.object.select_all(action='DESELECT')
+                for obj in selected_obj:
+                    obj.select_set(True)
+                bpy.context.view_layer.objects.active = active_obj
+            
+            return obj_separated
+
+
+
+        for obj in objs:
+
+            obj.data = obj.data.copy() #Make object unique. Remove instancing.
+            
+            # print(f'{obj.data.users = }')
+
+            act_obj = bpy.context.active_object
+            bpy.context.view_layer.objects.active = obj
+            for modifier in obj.modifiers: # Apply all modifier
+                bpy.ops.object.modifier_apply(modifier=modifier.name)
+            bpy.context.view_layer.objects.active = act_obj
+            
+
+            attr_name = 'Elements'
+
+            if attr_name not in obj.data.attributes.keys():
+                    message = f'Attribute {attr_name} not found on {obj.name}. Skipping.'
+                    self.report({'INFO'}, message)
+                    continue
+
+
+            sub_elements_attr = None
+            for attr in obj.data.attributes.values():
+                if attr.name == attr_name:
+                    sub_elements_attr = attr
+
+
+            sub_elements_attr_data = sub_elements_attr.data.values()
+
+
+            
+            # 0  = Parent object, 
+            # Whole number = subelement index, this list includes indexes mentioned below
+            # .1 = subelement pivot point.
+            # .2 = Subelement X axis.
+            # .3 = Subelement Y axis.
+            attr_info = {}
+            sub_element_len = 0
+            for index,data in enumerate(sub_elements_attr_data):
+                i_val = round(data.value,3)
+                # print(f'ATTRIBUTE DATA: \n{i_val}')
+                i_val_int = int(i_val)
+
+                if i_val_int not in attr_info:
+                    attr_info[i_val_int] = {
+                        'index': [],
+                        'pivot_index': [],
+                        'x_axis_index': [],
+                        'y_axis_index': [],
+                        'parent_element_id': None,
+                        'object':None
+                    }
+
+                attr_info[i_val_int]['index'].append(index)
+
+                if round(i_val%1,1) == 0.1:
+                    sub_element_len += 1
+                    attr_info[i_val_int]['pivot_index'].append(index) #Vertex index that belongs to Pivot. Find: vertex[index].co
+                    attr_info[i_val_int]['parent_element_id'] = int(100*(round(i_val*10%1,2))) #This number points to a key in this dictionary. (Parent obj).
+                if round(i_val%1,1) == 0.2:
+                    attr_info[i_val_int]['x_axis_index'].append(index) #Vertex index where x axis points to.
+                if round(i_val%1,1) == 0.3:
+                    attr_info[i_val_int]['y_axis_index'].append(index) #Vertex index where Y axis points to.
+
+
+
+            attr_info_ordered = OrderedDict(sorted(attr_info.items(), key=lambda x: x[0]))
+
+            # print(f'{attr_info_ordered= }')
+
+            pivot_position = []
+            elements = []
+            for idx in attr_info_ordered:
+
+                #ORIGIN POSITION GET
+                if attr_info_ordered[idx]['pivot_index']:
+                    pivot_position = get_global_vertex_position(obj, attr_info_ordered[idx]['pivot_index'][0])
+                else:
+                    pivot_position = None
 
 
 
 
+                #--- ORIGIN ROTATION ---
+                
+                #Get Directional Vector X
+                if attr_info_ordered[idx]['x_axis_index'] != []:
+                    origin_idx = attr_info_ordered[idx]['pivot_index'][0]
+                    x_axis_idx = attr_info_ordered[idx]['x_axis_index'][0]
+                    attr_info_ordered[idx]['x_axis_index']
+                    directional_vector_x = (obj.matrix_world @ obj.data.vertices[x_axis_idx].co) - (obj.matrix_world @ obj.data.vertices[origin_idx].co) 
+                else:
+                    self.report({'ERROR'}, "Missing X axis. _.2")
+
+                #Get Directional Vector Y
+                if attr_info_ordered[idx]['y_axis_index'] != []:
+                    origin_idx = attr_info_ordered[idx]['pivot_index'][0]
+                    y_axis_idx = attr_info_ordered[idx]['y_axis_index'][0]
+                    attr_info_ordered[idx]['x_axis_index']
+                    directional_vector_y = (obj.matrix_world @ obj.data.vertices[y_axis_idx].co) - (obj.matrix_world @ obj.data.vertices[origin_idx].co)                 
+                else:
+                    self.report({'ERROR'}, "Missing X axis. _.3")
+
+                #Get Directional Vector Z
+                if attr_info_ordered[idx]['pivot_index'] != []:
+                    directional_vector_z = obj.data.vertices[attr_info_ordered[idx]['pivot_index'][0]].normal @ obj.matrix_world.inverted()
+                    directional_vector_z = directional_vector_z.normalized()
+                else:
+                    self.report({'ERROR'}, "Missing pivot position. Vert _.1")
+
+                orthagonal_xyz_axis =gram_schmidt_orthogonalization(directional_vector_x, directional_vector_y, directional_vector_z)
+                
+                #Rotational matrix from orthagonal axis vectors
+                rotational_matrix = vec_to_rotational_matrix(orthagonal_xyz_axis[0],orthagonal_xyz_axis[1],orthagonal_xyz_axis[2])
+
+                if self.remove_extra: #Remove verticies which belong to pivot point x axis and y axis. 
+                    attr_info[idx]['index'].remove(attr_info[idx]['x_axis_index'][0])
+                    attr_info[idx]['index'].remove(attr_info[idx]['y_axis_index'][0])
+                    attr_info[idx]['index'].remove(attr_info[idx]['pivot_index'][0])
+
+
+                # ------ DUPLICATE ELEMENT INICIES AND SET ORIGIN POSITION ------
+                element = element_separate(obj, attr_info[idx]['index'], parent =None, origin_coords = pivot_position)  #Add object information into ordered dictionary
+                element.name = obj.name + '_part' + '_'+str(idx)
+                attr_info_ordered[idx]['object'] = element #Assign detached object to dictionary
+
+                # ------ ORIGIN ROTATION SET ------
+                set_origin_rotation(element,rotational_matrix.to_4x4())
 
 
 
+            # ------ SELECT MAKE ID0 ACTIVE AND PARENT  ------
+            for idx in attr_info_ordered:
+                    
+                attr_info_ordered[idx]['object'].select_set(True)
+                if idx == 0:
+                    bpy.context.view_layer.objects.active = attr_info_ordered[idx]['object']
+
+                if attr_info_ordered[idx]['parent_element_id'] != None: 
+
+                    if attr_info_ordered[idx]['parent_element_id'] != idx:
+                        parent_id = attr_info_ordered[idx]['parent_element_id']
+                        parent_objects(attr_info_ordered[idx]['object'], attr_info_ordered[parent_id]['object']) 
 
 
 
+            # for element in attr_info_ordered:
+            #     print(f'ATTRIBUTE INFO #{element}: \n{attr_info_ordered[element]}')
+
+            for col in obj.users_collection:
+                col.objects.unlink(obj)
+
+            bpy.data.objects.remove(obj)
+            
 
 
-
+        return {'FINISHED'}
 
 
 
